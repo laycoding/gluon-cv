@@ -347,7 +347,8 @@ def train(net, train_data, val_data, eval_metric, ctx, args):
                 for data, label, rpn_cls_targets, rpn_box_targets, rpn_box_masks in zip(*batch):
                     gt_label = label[:, :, 4:5]
                     gt_box = label[:, :, :4]
-                    cls_pred, box_pred, roi, samples, matches, rpn_score, rpn_box, anchors = net(data, gt_box)
+                    #cls_pred, box_pred, roi, samples, matches, rpn_score, rpn_box, anchors = net(data, gt_box)
+                    cls_pred, box_pred, roi, samples, matches, ious, rpn_score, rpn_box, anchors = net(data, gt_box)
                     # losses of rpn
                     rpn_score = rpn_score.squeeze(axis=-1)
                     num_rpn_pos = (rpn_cls_targets >= 0).sum()
@@ -359,6 +360,7 @@ def train(net, train_data, val_data, eval_metric, ctx, args):
                     cls_targets, box_targets, box_masks = net.target_generator(roi, samples, matches, gt_label, gt_box)
                     # losses of rcnn
                     num_rcnn_pos = (cls_targets >= 0).sum()
+                    cls_targets_iou = net.soft_cls_target_generator(matches, ious)
                     rcnn_loss1 = rcnn_cls_loss(cls_pred, cls_targets, cls_targets >= 0) * cls_targets.size / cls_targets.shape[0] / num_rcnn_pos
                     rcnn_loss2 = rcnn_box_loss(box_pred, box_targets, box_masks) * box_pred.size / box_pred.shape[0] / num_rcnn_pos
                     rcnn_loss = rcnn_loss1 + rcnn_loss2

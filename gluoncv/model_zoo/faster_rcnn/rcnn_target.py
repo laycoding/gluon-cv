@@ -59,6 +59,7 @@ class RCNNTargetSampler(gluon.HybridBlock):
             new_rois = []
             new_samples = []
             new_matches = []
+            new_iou = []
             for i in range(self._num_image):
                 roi = F.squeeze(F.slice_axis(rois, axis=0, begin=i, end=i+1), axis=0)
                 score = F.squeeze(F.slice_axis(scores, axis=0, begin=i, end=i+1), axis=0)
@@ -127,11 +128,13 @@ class RCNNTargetSampler(gluon.HybridBlock):
                 new_rois.append(all_roi.take(indices))
                 new_samples.append(samples)
                 new_matches.append(matches)
+                new_iou.append(ious_max.take(indices))
             # stack all samples together
             new_rois = F.stack(*new_rois, axis=0)
             new_samples = F.stack(*new_samples, axis=0)
             new_matches = F.stack(*new_matches, axis=0)
-        return new_rois, new_samples, new_matches
+            new_ious = F.stack(*new_iou, axis=0)
+        return new_rois, new_samples, new_matches, new_ious
 
 
 class RCNNTargetGenerator(gluon.Block):
@@ -183,3 +186,43 @@ class RCNNTargetGenerator(gluon.Block):
             box_target = box_target.transpose((1, 2, 0, 3))
             box_mask = box_mask.transpose((1, 2, 0, 3))
         return cls_target, box_target, box_mask
+
+class RCNNSoftTargetGenerator(gluon.Block):
+    """RCNN target encoder to generate matching target and regression target values.
+
+    Parameters
+    ----------
+    num_class : int
+        Number of total number of positive classes.
+    means : iterable of float, default is (0., 0., 0., 0.)
+        Mean values to be subtracted from regression targets.
+    stds : iterable of float, default is (.1, .1, .2, .2)
+        Standard deviations to be divided from regression targets.
+
+    """
+    def __init__(self, num_class):
+        super(RCNNTargetGenerator, self).__init__()
+
+    #pylint: disable=arguments-differ
+    def forward(self, matches, ious):
+        """Components can handle batch images
+
+        Parameters
+        ----------
+        matches: (B, N), value [0, M), index to gt_label and gt_box.
+        ious: (B, N), value [0, 1], max ious with target box
+        Returns
+        -------
+        soft_cls_target: (B, N，C), value [0, 1)
+
+        """
+        with autograd.pause():
+            nd.save("inters/ious", ious)
+            nd.save("inters/matches", matches)
+            # soft_cls_target (B, N, C)
+            num_classes = matches.shape[1]
+            index = matches.expand_dims(axis=1)
+            soft_cls_target = ious.expand_dims(axis=2).repeat(num_classes, axis=0)
+            soft_cls_target = nd.zeros_like(soft_cls_target)
+            soft_cls_target = soft_cls_target.take(index)
+        return soft_cls_target

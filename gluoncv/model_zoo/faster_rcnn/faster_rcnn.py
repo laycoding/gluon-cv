@@ -5,7 +5,7 @@ import os
 import mxnet as mx
 from mxnet import autograd
 from mxnet.gluon import nn
-from .rcnn_target import RCNNTargetSampler, RCNNTargetGenerator
+from .rcnn_target import RCNNTargetSampler, RCNNTargetGenerator, RCNNSoftTargetGenerator
 from ..rcnn import RCNN
 from ..rpn import RPN
 
@@ -152,6 +152,7 @@ class FasterRCNN(RCNN):
         self._num_sample = num_sample
         self._rpn_test_post_nms = rpn_test_post_nms
         self._target_generator = {RCNNTargetGenerator(self.num_class)}
+        self._soft_target_generator = {RCNNSoftTargetGenerator(self.num_class)}
         self._additional_output = additional_output
         with self.name_scope():
             self.rpn = RPN(
@@ -176,6 +177,17 @@ class FasterRCNN(RCNN):
 
         """
         return list(self._target_generator)[0]
+
+    def soft_target_generator(self):
+        """Returns stored target generator
+
+        Returns
+        -------
+        mxnet.gluon.HybridBlock
+            The RCNN target generator
+
+        """
+        return list(self._soft_target_generator)[0]
 
     def reset_class(self, classes):
         super(FasterRCNN, self).reset_class(classes)
@@ -213,7 +225,7 @@ class FasterRCNN(RCNN):
         if autograd.is_training():
             rpn_score, rpn_box, raw_rpn_score, raw_rpn_box, anchors = \
                 self.rpn(feat, F.zeros_like(x))
-            rpn_box, samples, matches = self.sampler(rpn_box, rpn_score, gt_box)
+            rpn_box, samples, matches, ious = self.sampler(rpn_box, rpn_score, gt_box)
         else:
             _, rpn_box = self.rpn(feat, F.zeros_like(x))
 
@@ -247,9 +259,9 @@ class FasterRCNN(RCNN):
         # no need to convert bounding boxes in training, just return
         if autograd.is_training():
             if self._additional_output:
-                return (cls_pred, box_pred, rpn_box, samples, matches,
+                return (cls_pred, box_pred, rpn_box, samples, matches, ious,
                         raw_rpn_score, raw_rpn_box, anchors, top_feat)
-            return (cls_pred, box_pred, rpn_box, samples, matches,
+            return (cls_pred, box_pred, rpn_box, samples, matches, ious,
                     raw_rpn_score, raw_rpn_box, anchors)
 
         # cls_ids (B, N, C), scores (B, N, C)
