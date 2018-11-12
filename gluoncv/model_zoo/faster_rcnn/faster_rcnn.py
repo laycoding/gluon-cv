@@ -178,7 +178,7 @@ class FasterRCNN(RCNN):
         """
         return list(self._target_generator)[0]
 
-    def soft_target_generator(self):
+    def soft_target_generator(self, matches, ious):
         """Returns stored target generator
 
         Returns
@@ -187,7 +187,18 @@ class FasterRCNN(RCNN):
             The RCNN target generator
 
         """
-        return list(self._soft_target_generator)[0]
+        #return list(self._soft_target_generator)[0]
+        with autograd.pause():
+            nd.save("inters/ious", ious)
+            nd.save("inters/matches", matches)
+            # soft_cls_target (B, N, C)
+            num_classes = matches.shape[1]
+            index = matches.expand_dims(axis=1)
+            soft_cls_target = ious.expand_dims(axis=2).repeat(num_classes, axis=0)
+            soft_cls_target = nd.zeros_like(soft_cls_target)
+            soft_cls_target = soft_cls_target.take(index)
+        return soft_cls_target
+
 
     def reset_class(self, classes):
         super(FasterRCNN, self).reset_class(classes)

@@ -194,14 +194,10 @@ class RCNNSoftTargetGenerator(gluon.Block):
     ----------
     num_class : int
         Number of total number of positive classes.
-    means : iterable of float, default is (0., 0., 0., 0.)
-        Mean values to be subtracted from regression targets.
-    stds : iterable of float, default is (.1, .1, .2, .2)
-        Standard deviations to be divided from regression targets.
 
     """
     def __init__(self, num_class):
-        super(RCNNTargetGenerator, self).__init__()
+        super(RCNNSoftTargetGenerator, self).__init__()
 
     #pylint: disable=arguments-differ
     def forward(self, matches, ious):
