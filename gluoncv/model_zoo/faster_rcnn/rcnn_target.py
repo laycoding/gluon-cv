@@ -83,7 +83,8 @@ class RCNNTargetSampler(gluon.HybridBlock):
                 mask = F.where(all_score < 0, F.zeros_like(mask), mask)
                 # mark hard positive samples with 4
                 hard_pos_mask = ious_max >= self._hard_pos_iou_thresh
-                num_hard_pos = F.sum(hard_pos_mask)
+                #nd.save("inters/hard_pos_mask", hard_pos_mask)
+                num_hard_pos = F.sum(hard_pos_mask)[0].asscalar()
                 #mask = F.where(hard_pos_mask, F.ones_like(mask) * 4, mask)
                 # mark soft positive samples with 3
                 soft_pos_mask = ious_max >= self._soft_pos_iou_thresh
@@ -99,7 +100,8 @@ class RCNNTargetSampler(gluon.HybridBlock):
 
                 # sample hard core pos samples
                 num_hard_pos = F.min(num_hard_pos, self._max_pos)
-                order = F.argsort(ious_argmax, is_ascend=False)
+                nd.save("inters/num_hard_pos", num_hard_pos)
+                order = F.argsort(mask, is_ascend=False)
                 hard_topk = F.slice_axis(order, axis=0, begin=0, end=num_hard_pos)
                 hard_topk_indices = F.take(index, hard_topk)
                 hard_topk_samples = F.take(mask, hard_topk)
