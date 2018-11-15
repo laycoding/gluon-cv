@@ -1,6 +1,7 @@
 """Faster RCNN Model."""
 from __future__ import absolute_import
 
+from mxnet import ndarray as nd
 import os
 import mxnet as mx
 from mxnet import autograd
@@ -178,7 +179,7 @@ class FasterRCNN(RCNN):
         """
         return list(self._target_generator)[0]
 
-    def soft_target_generator(self, matches, ious):
+    def soft_target_generator(self, samples, matches, ious):
         """Returns stored target generator
 
         Returns
@@ -192,7 +193,7 @@ class FasterRCNN(RCNN):
             nd.save("inters/ious", ious)
             nd.save("inters/matches", matches)
             # soft_cls_target (B, N, C)
-            num_classes = matches.shape[1]
+            num_classes = self.num_class
             index = matches.expand_dims(axis=1)
             soft_cls_target = ious.expand_dims(axis=2).repeat(num_classes, axis=0)
             soft_cls_target = nd.zeros_like(soft_cls_target)
