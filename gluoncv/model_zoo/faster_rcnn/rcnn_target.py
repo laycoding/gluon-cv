@@ -1,7 +1,6 @@
 """RCNN Target Generator."""
 from __future__ import absolute_import
 
-from mxnet import ndarray as nd
 from mxnet import gluon
 from mxnet import autograd
 from ...nn.coder import MultiClassEncoder, NormalizedPerClassBoxCenterEncoder
@@ -35,8 +34,7 @@ class RCNNTargetSampler(gluon.HybridBlock):
         self._num_proposal = num_proposal
         self._num_sample = num_sample
         self._max_pos = int(round(num_sample * pos_ratio))
-        self._soft_pos_iou_thresh = soft_pos_iou_thresh
-        self._hard_pos_iou_thresh = hard_pos_iou_thresh
+        self._pos_iou_thresh = pos_iou_thresh
         self._max_num_gt = max_num_gt
 
     #pylint: disable=arguments-differ
@@ -61,7 +59,6 @@ class RCNNTargetSampler(gluon.HybridBlock):
             new_rois = []
             new_samples = []
             new_matches = []
-            new_iou = []
             for i in range(self._num_image):
                 roi = F.squeeze(F.slice_axis(rois, axis=0, begin=i, end=i+1), axis=0)
                 score = F.squeeze(F.slice_axis(scores, axis=0, begin=i, end=i+1), axis=0)
@@ -81,88 +78,60 @@ class RCNNTargetSampler(gluon.HybridBlock):
                 mask = F.ones_like(ious_max) * 2
                 # mark all ignore to 0
                 mask = F.where(all_score < 0, F.zeros_like(mask), mask)
-                # mark hard positive samples with 4
-                hard_pos_mask = ious_max >= self._hard_pos_iou_thresh
-                num_hard_pos = F.sum(hard_pos_mask)
-                #mask = F.where(hard_pos_mask, F.ones_like(mask) * 4, mask)
-                # mark soft positive samples with 3
-                soft_pos_mask = ious_max >= self._soft_pos_iou_thresh
-                mask = F.where(soft_pos_mask, F.ones_like(mask) * 3, mask)
-                mask = F.where(hard_pos_mask, F.ones_like(mask) * 4, mask)
+                # mark positive samples with 3
+                pos_mask = ious_max >= self._pos_iou_thresh
+                mask = F.where(pos_mask, F.ones_like(mask) * 3, mask)
 
                 # shuffle mask
                 rand = F.random.uniform(0, 1, shape=(self._num_proposal + self._max_num_gt,))
                 rand = F.slice_like(rand, ious_argmax)
-                index = F.argsort(rand, is_ascend=False)
+                index = F.argsort(rand)
                 mask = F.take(mask, index)
                 ious_argmax = F.take(ious_argmax, index)
 
-                # sample hard core pos samples
-                num_hard_pos = F.min(num_hard_pos, self._max_pos)
-                order = F.argsort(ious_argmax, is_ascend=False)
-                hard_topk = F.slice_axis(order, axis=0, begin=0, end=num_hard_pos)
-                hard_topk_indices = F.take(index, hard_topk)
-                hard_topk_samples = F.take(mask, hard_topk)
-                hard_topk_matches = F.take(ious_argmax, hard_topk)
-                # reset output: 4 hard pos 2 neg 0 ignore -> 1 pos -1 neg 0 ignore
-                hard_topk_samples = F.where(hard_topk_samples == 4,
-                                       F.ones_like(hard_topk_samples), hard_topk_samples)
-                hard_topk_samples = F.where(hard_topk_samples == 2,
-                                       F.ones_like(hard_topk_samples) * -1, hard_topk_samples)
-
-                # sample soft pos samples
-                num_soft_pos = self._max_pos - num_hard_pos
+                # sample pos samples
                 order = F.argsort(mask, is_ascend=False)
-                soft_topk = F.slice_axis(order, axis=0, begin=num_hard_pos, end=self._max_pos)
-                soft_topk_indices = F.take(index, soft_topk)
-                soft_topk_samples = F.take(mask, soft_topk)
-                soft_topk_matches = F.take(ious_argmax, soft_topk)
-                # reset output: 3 soft pos 2 neg 0 ignore -> 1 pos -1 neg 0 ignore
-                soft_topk_samples = F.where(soft_topk_samples == 3,
-                                       F.ones_like(soft_topk_samples), soft_topk_samples)
-                soft_topk_samples = F.where(soft_topk_samples == 2,
-                                       F.ones_like(soft_topk_samples) * -1, soft_topk_samples)
+                topk = F.slice_axis(order, axis=0, begin=0, end=self._max_pos)
+                topk_indices = F.take(index, topk)
+                topk_samples = F.take(mask, topk)
+                topk_matches = F.take(ious_argmax, topk)
+                # reset output: 3 pos 2 neg 0 ignore -> 1 pos -1 neg 0 ignore
+                topk_samples = F.where(topk_samples == 3,
+                                       F.ones_like(topk_samples), topk_samples)
+                topk_samples = F.where(topk_samples == 2,
+                                       F.ones_like(topk_samples) * -1, topk_samples)
 
                 # sample neg samples
                 index = F.slice_axis(index, axis=0, begin=self._max_pos, end=None)
                 mask = F.slice_axis(mask, axis=0, begin=self._max_pos, end=None)
                 ious_argmax = F.slice_axis(ious_argmax, axis=0, begin=self._max_pos, end=None)
-                # change mask: 5 neg 3/4 pos 0 ignore
-                mask = F.where(mask == 2, F.ones_like(mask) * 5, mask)
+                # change mask: 4 neg 3 pos 0 ignore
+                mask = F.where(mask == 2, F.ones_like(mask) * 4, mask)
                 order = F.argsort(mask, is_ascend=False)
                 num_neg = self._num_sample - self._max_pos
                 bottomk = F.slice_axis(order, axis=0, begin=0, end=num_neg)
                 bottomk_indices = F.take(index, bottomk)
                 bottomk_samples = F.take(mask, bottomk)
                 bottomk_matches = F.take(ious_argmax, bottomk)
-                # reset output: 5 neg 3/4 pos 0 ignore -> 1 pos -1 neg 0 ignore
-                # actually 4->1 dont not work, cause the hard core wont go to the bottom
+                # reset output: 4 neg 3 pos 0 ignore -> 1 pos -1 neg 0 ignore
                 bottomk_samples = F.where(bottomk_samples == 3,
                                           F.ones_like(bottomk_samples), bottomk_samples)
                 bottomk_samples = F.where(bottomk_samples == 4,
-                                          F.ones_like(bottomk_samples), bottomk_samples)
-                bottomk_samples = F.where(bottomk_samples == 5,
                                           F.ones_like(bottomk_samples) * -1, bottomk_samples)
 
                 # output
-                indices = F.concat(hard_topk_indices, soft_topk_indices, bottomk_indices, dim=0)
-                samples = F.concat(hard_topk_samples, soft_topk_samples, bottomk_samples, dim=0)
-                matches = F.concat(hard_topk_matches, soft_topk_matches, bottomk_matches, dim=0)
+                indices = F.concat(topk_indices, bottomk_indices, dim=0)
+                samples = F.concat(topk_samples, bottomk_samples, dim=0)
+                matches = F.concat(topk_matches, bottomk_matches, dim=0)
 
                 new_rois.append(all_roi.take(indices))
                 new_samples.append(samples)
                 new_matches.append(matches)
-                new_iou.append(ious_max.take(indices))
-                nd.save("inters/new_iou", new_iou)
-                nd.save("inters/new_matches", new_matches)
-                nd.save("inters/new_samples", new_samples)
-                nd.save("inters/new_rois", new_rois)
             # stack all samples together
             new_rois = F.stack(*new_rois, axis=0)
             new_samples = F.stack(*new_samples, axis=0)
             new_matches = F.stack(*new_matches, axis=0)
-            new_ious = F.stack(*new_iou, axis=0)
-        return new_rois, new_samples, new_matches, new_ious
+        return new_rois, new_samples, new_matches
 
 
 class RCNNTargetGenerator(gluon.Block):
@@ -214,39 +183,3 @@ class RCNNTargetGenerator(gluon.Block):
             box_target = box_target.transpose((1, 2, 0, 3))
             box_mask = box_mask.transpose((1, 2, 0, 3))
         return cls_target, box_target, box_mask
-
-class RCNNSoftTargetGenerator(gluon.Block):
-    """RCNN target encoder to generate matching target and regression target values.
-
-    Parameters
-    ----------
-    num_class : int
-        Number of total number of positive classes.
-
-    """
-    def __init__(self, num_class):
-        super(RCNNSoftTargetGenerator, self).__init__()
-
-    #pylint: disable=arguments-differ
-    def forward(self, samples, matches, ious):
-        """Components can handle batch images
-
-        Parameters
-        ----------
-        matches: (B, N), value [0, M), index to gt_label and gt_box.
-        ious: (B, N), value [0, 1], max ious with target box
-        Returns
-        -------
-        soft_cls_target: (B, N，C), value [0, 1)
-
-        """
-        with autograd.pause():
-            nd.save("inters/soft_ious", ious)
-            nd.save("inters/soft_matches", matches)
-            # soft_cls_target (B, N, C)
-            num_classes = matches.shape[1]
-            index = matches.expand_dims(axis=1)
-            soft_cls_target = ious.expand_dims(axis=2).repeat(num_classes, axis=0)
-            soft_cls_target = nd.zeros_like(soft_cls_target)
-            soft_cls_target = soft_cls_target.take(index)
-        return soft_cls_target
